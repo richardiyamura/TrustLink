@@ -1311,6 +1311,89 @@ fn test_get_attestations_in_range_multi_page_determinism() {
 }
 
 #[test]
+fn test_get_attestations_in_range_after_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "CURSOR_PAGINATION_TEST");
+
+    let mut expected_ids = soroban_sdk::Vec::new(&env);
+    for i in 1..=6 {
+        env.ledger().set_timestamp(i * 100);
+        let id = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+        expected_ids.push_back(id);
+    }
+
+    let page1 = client.get_attestations_in_range_after(&subject, &100, &600, &None, &2);
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap().id, expected_ids.get(0).unwrap().clone());
+    assert_eq!(page1.get(1).unwrap().id, expected_ids.get(1).unwrap().clone());
+
+    let page2 = client.get_attestations_in_range_after(&subject, &100, &600, &Some(page1.get(1).unwrap().id.clone()), &2);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap().id, expected_ids.get(2).unwrap().clone());
+    assert_eq!(page2.get(1).unwrap().id, expected_ids.get(3).unwrap().clone());
+
+    let page3 = client.get_attestations_in_range_after(&subject, &100, &600, &Some(page2.get(1).unwrap().id.clone()), &2);
+    assert_eq!(page3.len(), 2);
+    assert_eq!(page3.get(0).unwrap().id, expected_ids.get(4).unwrap().clone());
+    assert_eq!(page3.get(1).unwrap().id, expected_ids.get(5).unwrap().clone());
+
+    let page4 = client.get_attestations_in_range_after(&subject, &100, &600, &Some(page3.get(1).unwrap().id.clone()), &2);
+    assert_eq!(page4.len(), 0);
+}
+
+#[test]
+fn test_get_attestations_in_range_after_cursor_resilient_to_deletion() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "CURSOR_DELETION_TEST");
+
+    env.ledger().set_timestamp(100);
+    let id1 = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+    env.ledger().set_timestamp(200);
+    let id2 = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+    env.ledger().set_timestamp(300);
+    let id3 = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+    env.ledger().set_timestamp(400);
+    let id4 = client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+
+    let first_page = client.get_attestations_in_range_after(&subject, &100, &400, &None, &2);
+    assert_eq!(first_page.len(), 2);
+    assert_eq!(first_page.get(0).unwrap().id, id1);
+    assert_eq!(first_page.get(1).unwrap().id, id2);
+
+    client.request_deletion(&subject, &id2);
+
+    let second_page = client.get_attestations_in_range_after(&subject, &100, &400, &Some(id2.clone()), &2);
+    assert_eq!(second_page.len(), 2);
+    assert_eq!(second_page.get(0).unwrap().id, id3);
+    assert_eq!(second_page.get(1).unwrap().id, id4);
+}
+
+#[test]
+fn test_get_attestations_in_range_after_invalid_cursor_returns_empty() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, issuer, client) = setup(&env);
+    let subject = Address::generate(&env);
+    let claim_type = String::from_str(&env, "INVALID_CURSOR_TEST");
+
+    env.ledger().set_timestamp(100);
+    client.create_attestation(&issuer, &subject, &claim_type, &None, &None, &None);
+
+    let invalid_cursor = String::from_str(&env, "nonexistent_cursor_id");
+    let results = client.get_attestations_in_range_after(&subject, &100, &200, &Some(invalid_cursor), &10);
+    assert_eq!(results.len(), 0);
+}
+
+#[test]
 fn test_tags_length_limits() {
     let env = Env::default();
     env.mock_all_auths();
